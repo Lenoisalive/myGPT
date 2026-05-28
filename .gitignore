@@ -2,6 +2,7 @@
 # data files
 # ========================================
 *.txt
+*.txt.backup
 *.csv
 *.json
 *.jsonl
@@ -34,3 +35,5 @@
 *.pyc
 
 *.log
+
+*.DS_Store

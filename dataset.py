@@ -1,7 +1,9 @@
 # dataset.py
 
 import torch
-from tokenizer import CharTokenizer
+import pickle
+import os
+from tokenizer import CharTokenizer, BPETokenizer
 import config
 
 

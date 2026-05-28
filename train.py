@@ -1,7 +1,7 @@
 # train.py
 """
 训练语言模型
-支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention) 和 V4 (Transformer)
+支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention)、V4 (Transformer) 和 V5 (BPE)
 """
 
 import torch
@@ -12,7 +12,6 @@ import json
 import os
 import sys
 from model import BigramLanguageModel
-from dataset import get_batch, tokenizer, train_data, val_data
 import config
 
 
@@ -20,6 +19,7 @@ import config
 USE_ATTENTION = True
 NUM_HEADS = config.n_head
 N_LAYER = config.n_layer  # V4 使用多层
+IS_V5 = False
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'v1':
@@ -38,6 +38,19 @@ if len(sys.argv) > 1:
         USE_ATTENTION = True
         NUM_HEADS = config.n_head
         N_LAYER = config.n_layer
+    elif sys.argv[1] == 'v5':
+        USE_ATTENTION = True
+        NUM_HEADS = config.n_head
+        N_LAYER = config.n_layer
+        IS_V5 = True
+
+# 根据版本导入相应的数据集
+if IS_V5:
+    from dataset_v5 import get_batch, tokenizer, train_data, val_data
+    print("✅ 使用 BPE Tokenizer (V5)")
+else:
+    from dataset import get_batch, tokenizer, train_data, val_data
+    print("✅ 使用 Char Tokenizer (V1-V4)")
 
 
 def print_section(title):
@@ -88,6 +101,8 @@ def train():
     """训练模型"""
     if not USE_ATTENTION:
         version_name = "V1 Bigram"
+    elif IS_V5:
+        version_name = f"V5 Transformer + BPE ({N_LAYER} layers, {NUM_HEADS} heads)"
     elif N_LAYER > 0:
         version_name = f"V4 Transformer ({N_LAYER} layers, {NUM_HEADS} heads)"
     elif NUM_HEADS == 1:
@@ -197,7 +212,12 @@ def train():
     
     # 训练完成
     total_time = time.time() - start_time
-    version_suffix = "v2" if USE_ATTENTION else "v1"
+    if IS_V5:
+        version_suffix = "v5"
+    elif USE_ATTENTION:
+        version_suffix = "v2"
+    else:
+        version_suffix = "v1"
     print_section("✨ 训练完成")
     print(f"   总用时: {format_time(total_time)}")
     print(f"   最佳验证损失: {best_val_loss:.4f}")

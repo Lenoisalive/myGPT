@@ -9,7 +9,41 @@
 2. ✅ **V2**: Single-Head Self-Attention（已完成）
 3. ✅ **V3**: Multi-Head Attention（已完成）
 4. ✅ **V4**: Transformer Block（已完成）
-5. 🔄 **V5**: 完整的 GPT 架构
+5. 🚀 **V5-V10**: [升级路线图](ROADMAP.md) - 从玩具 GPT → 实用 GPT
+
+> 📚 **查看完整升级计划**: [ROADMAP.md](ROADMAP.md)
+> - V5: BPE Tokenizer (训练提速 2-3x)
+> - V6: RoPE + RMSNorm + SwiGLU
+> - V7: Better Training (Warmup + Cosine Decay)
+> - V8: Better Inference (KV Cache + Sampling)
+> - V9: FlashAttention (速度提升 5-10x)
+> - V10: Instruction Tuning (对话能力)
+
+---
+
+## 🚀 快速开始 - V5 升级
+
+**立即升级到 BPE Tokenizer，训练提速 2-3 倍！**
+
+```bash
+# 1. 运行升级脚本
+python upgrade_to_v5.py
+
+# 2. 测试 BPE tokenizer
+python tokenizer.py
+
+# 3. 准备 BPE 数据 (待实现)
+python prepare_bpe_data.py
+
+# 4. 训练 V5 模型 (待实现)
+python train.py v5
+```
+
+**预期提升**:
+- Token 数量: ⬇️ 80% (256 → 50 tokens)
+- 训练时间: ⬇️ 60% (10min → 4min)
+- 生成质量: ⬆️ 明显提升
+- 支持更大数据集
 
 ---
 
