@@ -1,6 +1,7 @@
 # train.py
 """
-训练 Bigram Language Model
+训练语言模型
+支持 V1 (Bigram)、V2 (Self-Attention) 和 V3 (Multi-Head Attention)
 """
 
 import torch
@@ -9,9 +10,26 @@ from torch.optim import AdamW
 import time
 import json
 import os
+import sys
 from model import BigramLanguageModel
 from dataset import get_batch, tokenizer, train_data, val_data
 import config
+
+
+# 从命令行参数获取版本，默认 V3
+USE_ATTENTION = True
+NUM_HEADS = config.n_head  # 默认使用 multi-head
+
+if len(sys.argv) > 1:
+    if sys.argv[1] == 'v1':
+        USE_ATTENTION = False
+        NUM_HEADS = 1
+    elif sys.argv[1] == 'v2':
+        USE_ATTENTION = True
+        NUM_HEADS = 1
+    elif sys.argv[1] == 'v3':
+        USE_ATTENTION = True
+        NUM_HEADS = config.n_head
 
 
 def print_section(title):
@@ -60,16 +78,29 @@ def format_time(seconds):
 
 def train():
     """训练模型"""
-    print_section("🚀 开始训练 Bigram Language Model")
+    if not USE_ATTENTION:
+        version_name = "V1 Bigram"
+    elif NUM_HEADS == 1:
+        version_name = "V2 Self-Attention"
+    else:
+        version_name = f"V3 Multi-Head Attention ({NUM_HEADS} heads)"
+    
+    print_section(f"🚀 开始训练 {version_name} Language Model")
     
     # 打印配置
     print("\n📋 训练配置:")
+    print(f"   模型版本: {version_name}")
     print(f"   设备: {config.device}")
     print(f"   批次大小: {config.batch_size}")
     print(f"   上下文长度: {config.block_size}")
     print(f"   最大迭代: {config.max_iters}")
     print(f"   学习率: {config.learning_rate}")
     print(f"   评估间隔: {config.eval_interval}")
+    if USE_ATTENTION:
+        print(f"   嵌入维度: {config.n_embd}")
+        if NUM_HEADS > 1:
+            print(f"   Attention Heads: {NUM_HEADS}")
+            print(f"   Head Size: {config.n_embd // NUM_HEADS}")
     
     # 打印数据统计
     print(f"\n📊 数据统计:")
@@ -79,7 +110,7 @@ def train():
     
     # 创建模型
     print_section("🔨 创建模型")
-    model = BigramLanguageModel(tokenizer.vocab_size)
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS)
     model = model.to(config.device)
     
     # 创建优化器
@@ -153,14 +184,16 @@ def train():
     
     # 训练完成
     total_time = time.time() - start_time
+    version_suffix = "v2" if USE_ATTENTION else "v1"
     print_section("✨ 训练完成")
     print(f"   总用时: {format_time(total_time)}")
     print(f"   最佳验证损失: {best_val_loss:.4f}")
     
     # 保存训练日志
-    with open('training_log.json', 'w') as f:
+    log_filename = f'training_log_{version_suffix}.json'
+    with open(log_filename, 'w') as f:
         json.dump(training_log, f, indent=2)
-    print(f"   📊 训练日志已保存到 training_log.json")
+    print(f"   📊 训练日志已保存到 {log_filename}")
     
     # 保存最终模型
     torch.save({

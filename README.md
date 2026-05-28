@@ -5,15 +5,110 @@
 ## 🎯 项目目标
 
 通过逐步实现，深入理解 GPT 的工作原理：
-1. ✅ **V1**: Bigram Language Model（当前版本）
-2. 🔄 **V2**: 添加 Position Embedding
-3. 🔄 **V3**: 添加 Self-Attention
-4. 🔄 **V4**: 添加 Feed-Forward 网络
+1. ✅ **V1**: Bigram Language Model（已完成）
+2. ✅ **V2**: Single-Head Self-Attention（已完成）
+3. ✅ **V3**: Multi-Head Attention（已完成）
+4. 🔄 **V4**: Feed-Forward 网络
 5. 🔄 **V5**: 完整的 Transformer 架构
 
 ---
 
-## ✅ V1: Bigram Language Model - 已完成！
+## ✅ V3: Multi-Head Attention - 已完成！
+
+### 核心突破
+
+**从 V2 到 V3 的关键变化**:
+```
+V2 (Single-Head):  1个 attention 学习 1 种模式
+V3 (Multi-Head):   4个 attention 并行学习多种模式
+```
+
+### 多头注意力的威力
+
+不同的 head 可以专注于学习不同的语言模式：
+- **Head 1**: 语法关系（主谓宾）
+- **Head 2**: 长距离依赖
+- **Head 3**: 局部上下文
+- **Head 4**: 实体关系
+
+然后通过 **projection layer** 融合所有信息！
+
+### 技术实现
+
+1. **并行计算多个 Attention Heads**
+   ```python
+   heads = [Head(head_size) for _ in range(num_heads)]
+   out = torch.cat([h(x) for h in heads], dim=-1)
+   ```
+
+2. **输出投影**
+   ```python
+   self.proj = nn.Linear(num_heads * head_size, n_embd)
+   ```
+
+3. **参数量对比**
+   - V1: 4,225
+   - V2: 82,241
+   - **V3**: 98,753 (+20% vs V2)
+
+---
+
+## ✅ V2: Single-Head Self-Attention
+
+### 核心改进
+
+**从 V1 到 V2 的关键变化**:
+```
+V1 (Bigram):  只看当前 token → 预测下一个
+V2 (Attention): 看所有之前的 token → 预测下一个
+```
+
+### 新增功能
+
+1. **Self-Attention 机制**
+   - Query/Key/Value 投影
+   - Scaled Dot-Product Attention
+   - Causal Masking (只看左边)
+
+2. **Position Embedding**
+   - 让模型知道 token 的位置
+   - 与 token embedding 相加
+
+3. **更大的 Embedding 空间**
+   - 从 `[vocab_size, vocab_size]` → `[vocab_size, n_embd]`
+   - 参数量: 4,225 → 82,241 (增加 ~19倍)
+
+### 训练结果对比
+
+| 指标 | V1 (Bigram) | V2 (Single-Head) | V3 (Multi-Head) |
+|------|-------------|------------------|-----------------|
+| 参数量 | 4,225 | 82,241 | 98,753 |
+| Attention Heads | - | 1 | 4 |
+| 初始损失 | 4.62 | ~4.2 | ~4.2 |
+| 预期最终损失 | 3.09 | ~2.4 | ~2.1 |
+| 训练时间 | 13秒 | ~50秒 | ~60秒 |
+| 生成质量 | ⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+
+### 生成质量对比
+
+**V1 (Bigram) - 迭代 5000**:
+```
+Thand nd,PETheWd tFO:l II&,
+WLLEUzhav
+```
+❌ 单词混乱，无上下文
+
+**V2 (Self-Attention) - 迭代 2000**:
+```
+Tmt,d y sheelot benoo ye what s t sa eand 
+averates anecI pane, thart,
+Tow arifor menluthoise papoo
+```
+✅ 开始出现短语结构，单词更完整
+
+---
+
+## ✅ V1: Bigram Language Model
 
 ### 核心思想
 ```
@@ -22,7 +117,56 @@ P(next_token | current_token)
 
 最简单的语言模型：给定当前 token，预测下一个 token。
 
-### 训练结果
+### 训练结果对比
+
+| 指标 | V1 (Bigram) | V2 (Self-Attention) | 改善 |
+|------|-------------|---------------------|------|
+| 参数量 | 4,225 | 82,241 | +19倍 |
+| 初始损失 | 4.62 | 4.17 | - |
+| 最终损失 | 3.09 | 2.40 | ↓ 22% |
+| 训练时间 | 13秒 | 44秒 | +3.4倍 |
+| 生成质量 | ⭐⭐ | ⭐⭐⭐⭐ | 显著提升 |
+
+### 生成质量对比
+
+**V1 (Bigram) - 迭代 5000**:
+```
+Thand nd,PETheWd tFO:l II&,
+WLLEUzhav
+```
+❌ 单词混乱，无上下文
+
+**V2 (Self-Attention) - 迭代 5000**:
+```
+I Maatt ton loud thee me that in tents 
+it the tothand telo she alivet the ard 
+tond the te the outre ing thin
+```
+✅ 更完整的单词，开始有短语结构
+
+**V2 温度 = 0.8**:
+```
+BARICBLADARI:
+T INou thahe lat,
+Yer lall wadond two riy,
+
+ORAUNESTin macou warfa sthe anned,
+Thing the mot wout be soe ou chahe
+```
+✅ 出现了类似名字、对话的结构
+
+---
+
+## ✅ V1: Bigram Language Model
+
+### 核心思想
+```
+P(next_token | current_token)
+```
+
+最简单的语言模型：给定当前 token，预测下一个 token。
+
+### V1 训练结果
 
 | 指标 | 数值 |
 |------|------|
@@ -31,19 +175,6 @@ P(next_token | current_token)
 | 改善程度 | 33.2% ↓ |
 | 训练时长 | 13秒 |
 | 模型参数 | 4,225 |
-
-### 生成示例
-
-**温度 = 0.5**:
-```
-Thand nd,PETheWd tFO:l II&,
-WLLEUzhav
-```
-
-**温度 = 0.8**:
-```
-We.Nve fyrs ald thwGangugo!purso!
-```
 
 ---
 
@@ -54,39 +185,77 @@ We.Nve fyrs ald thwGangugo!purso!
 ```bash
 # 激活虚拟环境
 source .venv/bin/activate  # macOS/Linux
-# 或
-.venv\Scripts\activate     # Windows
 
 # 检查 PyTorch
 python -c "import torch; print(torch.__version__)"
 ```
 
-### 2. 快速测试
+### 2. 下载更大的数据集（推荐）
 
 ```bash
-python quick_test.py
+# 方式 1: 使用交互式脚本（推荐）
+./download_data.sh
+
+# 方式 2: 直接指定大小
+python download_data.py --size 100  # 下载 100MB 数据
+
+# 常用大小建议:
+# 50MB   - 快速测试
+# 100MB  - 日常训练（推荐）
+# 500MB  - 更好效果
+# 1024MB - 最佳效果
 ```
 
-### 3. 训练模型（已完成）
+**数据集来源**: [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) - HuggingFace 的高质量网页文本数据集
+
+### 3. 快速测试
 
 ```bash
-python train.py
+# 测试所有组件（包括 V1、V2 和 V3）
+python model.py
 ```
 
-### 4. 生成文本
+### 4. 训练模型
 
 ```bash
-# 交互式模式
+# 训练 V3 (Multi-Head Attention) - 推荐！
+python train.py v3
+
+# 或训练 V2 (Single-Head)
+python train.py v2
+
+# 或训练 V1 (Bigram)
+python train.py v1
+```
+
+### 5. 生成文本
+
+```bash
+# V3 交互式生成（默认，推荐）
 python generate.py
 
-# 批量生成
-python generate.py batch
+# V2 交互式生成
+python generate.py v2
+
+# V1 交互式生成
+python generate.py v1
+
+# V3 批量生成
+python generate.py v3 batch
 ```
 
-### 5. 可视化训练
+### 6. 比较模型
 
 ```bash
-python visualize_training.py
+# 训练不同版本并对比
+python train.py v1
+python train.py v2
+python train.py v3
+
+# 对比生成质量
+python generate.py v1
+python generate.py v2
+python generate.py v3
 ```
 
 ---
@@ -96,6 +265,14 @@ python visualize_training.py
 ```
 myGPT/
 ├── 核心代码
+│   ├── tokenizer.py          # 字符级 tokenizer
+│   ├── dataset.py            # 数据处理
+│   ├── model.py              # V1 + V2 模型
+│   ├── train.py              # 训练脚本（支持 v1/v2）
+│   ├── generate.py           # 生成脚本（支持 v1/v2）
+│   └── config.py             # 配置文件
+│
+├── 工具脚本
 │   ├── tokenizer.py          # 字符级 tokenizer
 │   ├── dataset.py            # 数据处理
 │   ├── model.py              # Bigram 模型

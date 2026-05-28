@@ -1,9 +1,11 @@
 # generate.py
 """
 使用训练好的模型生成文本
+支持 V1 和 V2 模型
 """
 
 import torch
+import sys
 from model import BigramLanguageModel
 from tokenizer import CharTokenizer
 import config
@@ -16,12 +18,14 @@ def print_section(title):
     print("="*60)
 
 
-def load_model(checkpoint_path='checkpoints/best_model.pt'):
+def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, num_heads=1):
     """
     加载训练好的模型
     
     Args:
         checkpoint_path: 检查点路径
+        use_attention: 是否使用 attention (V2/V3)
+        num_heads: attention heads 数量
         
     Returns:
         model: 加载的模型
@@ -39,7 +43,7 @@ def load_model(checkpoint_path='checkpoints/best_model.pt'):
     tokenizer = CharTokenizer(text)
     
     # 创建模型
-    model = BigramLanguageModel(tokenizer.vocab_size)
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=use_attention, num_heads=num_heads)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(config.device)
     model.eval()
@@ -86,12 +90,20 @@ def generate_text(model, tokenizer, prompt="", max_new_tokens=500, temperature=0
     return generated_text
 
 
-def interactive_mode():
+def interactive_mode(use_attention=True, num_heads=1):
     """交互式生成模式"""
-    print_section("🎮 交互式生成模式")
+    if not use_attention:
+        version_name = "V1 (Bigram)"
+    elif num_heads == 1:
+        version_name = "V2 (Self-Attention)"
+    else:
+        version_name = f"V3 (Multi-Head Attention, {num_heads} heads)"
+    
+    print_section(f"🎮 交互式生成模式 - {version_name}")
     
     # 加载模型
-    model, tokenizer = load_model()
+    checkpoint_path = 'checkpoints/best_model.pt'
+    model, tokenizer = load_model(checkpoint_path, use_attention=use_attention, num_heads=num_heads)
     
     print("\n💡 使用说明:")
     print("   - 输入提示文本，按回车生成")
@@ -127,12 +139,19 @@ def interactive_mode():
         print(f"{'─'*60}")
 
 
-def batch_generate():
+def batch_generate(use_attention=True, num_heads=1):
     """批量生成多个样本"""
-    print_section("🎲 批量生成样本")
+    if not use_attention:
+        version_name = "V1 (Bigram)"
+    elif num_heads == 1:
+        version_name = "V2 (Self-Attention)"
+    else:
+        version_name = f"V3 (Multi-Head Attention, {num_heads} heads)"
+    
+    print_section(f"🎲 批量生成样本 - {version_name}")
     
     # 加载模型
-    model, tokenizer = load_model()
+    model, tokenizer = load_model(use_attention=use_attention, num_heads=num_heads)
     
     temperatures = [0.5, 0.8, 1.0, 1.2]
     num_samples = 3
@@ -153,19 +172,30 @@ def main():
     """主函数"""
     import sys
     
-    if len(sys.argv) > 1:
-        if sys.argv[1] == 'batch':
-            batch_generate()
-        elif sys.argv[1] == 'interactive':
-            interactive_mode()
-        else:
-            print("❌ 未知参数")
-            print("用法:")
-            print("  python generate.py              # 交互式模式")
-            print("  python generate.py interactive  # 交互式模式")
-            print("  python generate.py batch        # 批量生成")
+    # 解析参数
+    use_attention = True  # 默认使用 V3
+    num_heads = config.n_head  # 默认 multi-head
+    mode = 'interactive'
+    
+    for arg in sys.argv[1:]:
+        if arg == 'v1':
+            use_attention = False
+            num_heads = 1
+        elif arg == 'v2':
+            use_attention = True
+            num_heads = 1
+        elif arg == 'v3':
+            use_attention = True
+            num_heads = config.n_head
+        elif arg == 'batch':
+            mode = 'batch'
+        elif arg == 'interactive':
+            mode = 'interactive'
+    
+    if mode == 'batch':
+        batch_generate(use_attention, num_heads)
     else:
-        interactive_mode()
+        interactive_mode(use_attention, num_heads)
 
 
 if __name__ == "__main__":
