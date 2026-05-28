@@ -1,0 +1,30 @@
+# ========================================
+# data files
+# ========================================
+*.txt
+*.csv
+*.json
+*.jsonl
+*.parquet
+*.arrow
+*.feather
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# ========================================
+# model files
+# ========================================
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.pb
+*.tflite
+*.h5
+*.keras
+
+.venv/
