@@ -28,3 +28,9 @@
 *.keras
 
 .venv/
+
+
+
+*.pyc
+
+*.log
