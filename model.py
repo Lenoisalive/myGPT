@@ -3,6 +3,7 @@
 V1: Bigram Language Model
 V2: Single-Head Self-Attention Language Model
 V3: Multi-Head Self-Attention Language Model
+V4: Transformer Block (with FFN, Residual, LayerNorm)
 """
 
 import torch
@@ -73,6 +74,7 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(num_heads * head_size, config.n_embd)
+        self.dropout = nn.Dropout(config.dropout)
         
     def forward(self, x):
         """
@@ -88,29 +90,104 @@ class MultiHeadAttention(nn.Module):
         
         # 通过 projection 混合所有 head 的信息
         out = self.proj(out)  # [B, T, n_embd]
+        out = self.dropout(out)
         
         return out
 
 
-class BigramLanguageModel(nn.Module):
+class FeedForward(nn.Module):
     """
-    V1: Bigram 语言模型 (使用 use_attention=False)
-    V2: Self-Attention 语言模型 (使用 use_attention=True, num_heads=1)
-    V3: Multi-Head Attention 语言模型 (使用 use_attention=True, num_heads>1)
+    Feed-Forward 网络
+    
+    核心思想:
+    - 简单的两层 MLP
+    - 中间层扩展 4 倍（GPT 标准做法）
+    - GELU 激活函数（比 ReLU 更平滑）
+    - Dropout 防止过拟合
     """
     
-    def __init__(self, vocab_size, use_attention=False, num_heads=1):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),  # 扩展 4 倍
+            nn.GELU(),                       # GPT 使用 GELU
+            nn.Linear(4 * n_embd, n_embd),  # 投影回原维度
+            nn.Dropout(config.dropout),
+        )
+    
+    def forward(self, x):
+        return self.net(x)
+
+
+class TransformerBlock(nn.Module):
+    """
+    完整的 Transformer Block
+    
+    结构:
+        x → LayerNorm → MultiHeadAttention → Residual
+          → LayerNorm → FeedForward → Residual
+    
+    核心组件:
+    - LayerNorm: 稳定训练
+    - Residual: 避免梯度消失
+    - Attention: 信息交互
+    - FFN: 特征变换
+    """
+    
+    def __init__(self, n_embd, num_heads):
+        super().__init__()
+        head_size = n_embd // num_heads
+        self.sa = MultiHeadAttention(num_heads, head_size)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)  # Pre-norm (GPT-2 style)
+        self.ln2 = nn.LayerNorm(n_embd)
+    
+    def forward(self, x):
+        """
+        Args:
+            x: [B, T, C] 输入
+            
+        Returns:
+            out: [B, T, C] 输出
+        """
+        # Attention block with residual
+        x = x + self.sa(self.ln1(x))    # Pre-norm + residual
+        
+        # Feed-forward block with residual
+        x = x + self.ffwd(self.ln2(x))  # Pre-norm + residual
+        
+        return x
+
+
+class BigramLanguageModel(nn.Module):
+    """
+    V1: Bigram 语言模型 (use_attention=False)
+    V2: Self-Attention 语言模型 (use_attention=True, num_heads=1, n_layer=0)
+    V3: Multi-Head Attention 语言模型 (use_attention=True, num_heads>1, n_layer=0)
+    V4: Transformer Block 语言模型 (use_attention=True, num_heads>1, n_layer>0)
+    """
+    
+    def __init__(self, vocab_size, use_attention=False, num_heads=1, n_layer=0):
         super().__init__()
         self.vocab_size = vocab_size
         self.use_attention = use_attention
         self.num_heads = num_heads
+        self.n_layer = n_layer
         
         if use_attention:
-            # V2/V3: Self-Attention 版本
+            # V2/V3/V4: Attention-based 版本
             self.token_embedding_table = nn.Embedding(vocab_size, config.n_embd)
             self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
             
-            if num_heads == 1:
+            if n_layer > 0:
+                # V4: Transformer Blocks
+                self.blocks = nn.Sequential(*[
+                    TransformerBlock(config.n_embd, num_heads) 
+                    for _ in range(n_layer)
+                ])
+                self.ln_f = nn.LayerNorm(config.n_embd)  # Final layer norm
+                version_name = f"V4 Transformer ({n_layer} layers, {num_heads} heads)"
+            elif num_heads == 1:
                 # V2: Single-Head
                 self.sa_head = Head(config.n_embd)
                 version_name = "V2 Self-Attention"
@@ -131,8 +208,11 @@ class BigramLanguageModel(nn.Module):
         
         print(f"   词汇表大小: {vocab_size}")
         print(f"   使用 Attention: {use_attention}")
-        if use_attention and num_heads > 1:
-            print(f"   Attention Heads: {num_heads}")
+        if use_attention:
+            if n_layer > 0:
+                print(f"   Transformer Layers: {n_layer}")
+            if num_heads > 1:
+                print(f"   Attention Heads: {num_heads}")
         print(f"   参数量: {self.count_parameters():,}")
     
     def count_parameters(self):
@@ -154,11 +234,19 @@ class BigramLanguageModel(nn.Module):
         B, T = idx.shape
         
         if self.use_attention:
-            # V2: Self-Attention 路径
+            # V2/V3/V4: Attention 路径
             tok_emb = self.token_embedding_table(idx)  # [B, T, n_embd]
             pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))  # [T, n_embd]
             x = tok_emb + pos_emb  # [B, T, n_embd]
-            x = self.sa_head(x)    # [B, T, n_embd] - 应用 self-attention
+            
+            if self.n_layer > 0:
+                # V4: 通过 Transformer blocks
+                x = self.blocks(x)  # [B, T, n_embd]
+                x = self.ln_f(x)    # Final layer norm
+            else:
+                # V2/V3: 单层 attention
+                x = self.sa_head(x)  # [B, T, n_embd]
+            
             logits = self.lm_head(x)  # [B, T, vocab_size]
         else:
             # V1: Bigram 路径
@@ -273,6 +361,19 @@ def test_model():
     print(f"   损失: {loss.item():.4f}")
     
     generated = model_v3.generate(context, max_new_tokens=20)
+    print(f"   生成: {generated.shape}")
+    
+    # 测试 V4 (Transformer Blocks)
+    print(f"\n" + "─"*60)
+    print(f"  V4: Transformer Model ({config.n_layer} layers, {config.n_head} heads)")
+    print("─"*60)
+    model_v4 = BigramLanguageModel(vocab_size, use_attention=True, num_heads=config.n_head, n_layer=config.n_layer)
+    
+    logits, loss = model_v4(idx, targets)
+    print(f"   输出形状: {logits.shape}")
+    print(f"   损失: {loss.item():.4f}")
+    
+    generated = model_v4.generate(context, max_new_tokens=20)
     print(f"   生成: {generated.shape}")
     
     # 测试 multi-head attention

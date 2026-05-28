@@ -13,7 +13,7 @@
 
 ## 项目概述
 
-这是一个从零开始实现的 GPT 语言模型项目，包含三个版本：
+这是一个从零开始实现的 GPT 语言模型项目，包含四个版本：
 
 ### V1: Bigram Model
 **核心**: `P(next_token | current_token)`
@@ -33,19 +33,29 @@
 - 语法、依赖、局部、实体关系
 - 参数量: 98,753
 
+### V4: Transformer Block Model
+**核心**: `TransformerBlock` + FFN + Residual + LayerNorm
+- 完整的 Transformer 结构
+- 可堆叠多层，训练更稳定
+- 参数量: 824,897
+
 ---
 
 ## 版本对比
 
-| 特性 | V1 (Bigram) | V2 (Single-Head) | V3 (Multi-Head) |
-|------|-------------|------------------|-----------------|
-| **上下文** | 只看当前 token | 看所有之前的 token | 看所有之前的 token |
-| **Position** | ❌ 无位置信息 | ✅ Position Embedding | ✅ Position Embedding |
-| **Attention** | ❌ 无 | ✅ Single-Head | ✅ Multi-Head (4) |
-| **参数量** | 4,225 | 82,241 | 98,753 |
-| **训练时间** | ~13秒 | ~50秒 | ~60秒 |
-| **最终损失** | ~3.09 | ~2.4 | ~2.1 (预期) |
-| **生成质量** | ⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 特性 | V1 | V2 | V3 | V4 |
+|------|----|----|----|---|
+| **上下文** | 只看当前 | 看所有之前 | 看所有之前 | 看所有之前 |
+| **Position** | ❌ | ✅ | ✅ | ✅ |
+| **Attention** | ❌ | ✅ Single | ✅ Multi (4) | ✅ Multi (4) |
+| **Layers** | - | 0 | 0 | 4 |
+| **FFN** | ❌ | ❌ | ❌ | ✅ |
+| **Residual** | ❌ | ❌ | ❌ | ✅ |
+| **LayerNorm** | ❌ | ❌ | ❌ | ✅ |
+| **参数量** | 4,225 | 82,241 | 98,753 | 824,897 |
+| **训练时间** | ~13秒 | ~50秒 | ~60秒 | ~2分钟 |
+| **最终损失** | ~3.09 | ~2.4 | ~2.1 | ~1.8 (预期) |
+| **生成质量** | ⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐⭐ |
 
 ### 生成质量对比
 
@@ -71,6 +81,16 @@ The sun rises in the morning, bringing warmth and light.
 - 更复杂的句子结构
 - 更好的语义连贯性
 - 更自然的语言流畅度
+
+**V4 输出** (预期):
+```
+In the bustling city center, people hurried along the sidewalks,
+their faces illuminated by the glow of storefronts and streetlights
+as the evening descended upon the urban landscape.
+```
+- 长句子，多个从句
+- 复杂的语义关系
+- 接近人类写作水平
 
 ---
 
@@ -667,6 +687,227 @@ python model.py
    每个 Head 输出: [1, 10, 32]  ✓
    Concat 输出: [1, 10, 128]  ✓
    完整输出: [1, 10, 128]  ✓
+```
+
+---
+
+## V4 Transformer Block 详解
+
+### 🎯 为什么需要 Transformer Block？
+
+**V3 的问题**:
+- 只有 attention，没有深度
+- 无法学习复杂的非线性变换
+- 难以堆叠多层（梯度问题）
+
+**V4 的解决方案**:
+```
+✅ Residual Connection → 梯度流动
+✅ LayerNorm → 训练稳定
+✅ Feed-Forward → 非线性变换
+✅ 可堆叠 4 层！
+```
+
+### 1. Transformer Block 架构
+
+```python
+class TransformerBlock(nn.Module):
+    def __init__(self, n_embd, num_heads):
+        self.sa = MultiHeadAttention(num_heads, head_size)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+    
+    def forward(self, x):
+        # Attention block
+        x = x + self.sa(self.ln1(x))    # Pre-norm + Residual
+        
+        # Feed-forward block
+        x = x + self.ffwd(self.ln2(x))  # Pre-norm + Residual
+        
+        return x
+```
+
+### 2. 核心组件详解
+
+#### A. LayerNorm (层归一化)
+
+**作用**: 稳定训练，防止梯度爆炸
+
+```python
+# 对每个样本的每个位置归一化
+mean = x.mean(dim=-1, keepdim=True)
+std = x.std(dim=-1, keepdim=True)
+x_norm = (x - mean) / (std + eps)
+```
+
+**为什么需要**:
+- 深层网络：hidden state 分布容易偏移
+- LayerNorm：保持分布稳定
+- 结果：训练更快，收敛更好
+
+#### B. Residual Connection (残差连接)
+
+**作用**: 让梯度直接流动，避免梯度消失
+
+```python
+# 传统: x = f(x)  梯度可能消失
+# Residual: x = x + f(x)  梯度直接传递
+```
+
+**直观理解**:
+```
+没有 residual:
+  x → layer1 → layer2 → layer3 → layer4
+  梯度: ← ← ← ← (越来越小)
+
+有 residual:
+  x → +layer1 → +layer2 → +layer3 → +layer4
+     ↓         ↓         ↓         ↓
+  梯度直接跳过多层！
+```
+
+#### C. Feed-Forward Network
+
+**作用**: 非线性特征变换
+
+```python
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),    # 扩展 4 倍
+            nn.GELU(),                         # 平滑激活
+            nn.Linear(4 * n_embd, n_embd),    # 压缩回来
+            nn.Dropout(config.dropout),
+        )
+```
+
+**为什么扩展 4 倍？**
+- GPT 标准做法
+- 给模型更大的表达空间
+- 类似"瓶颈"结构
+
+**为什么用 GELU？**
+- 比 ReLU 更平滑
+- 在 NLP 任务中效果更好
+- GPT/BERT 都用它
+
+#### D. Dropout
+
+**作用**: 防止过拟合
+
+```python
+# 训练时随机丢弃 20% 的神经元
+dropout = nn.Dropout(0.2)
+```
+
+### 3. 完整数据流
+
+```
+输入 [B, T, 128]
+  ↓
+─────────────────────
+Block 1:
+  x → LayerNorm
+    → MultiHeadAttention
+    → Dropout
+    → + (residual)
+  → LayerNorm
+    → FeedForward
+    → Dropout
+    → + (residual)
+─────────────────────
+Block 2: (same)
+─────────────────────
+Block 3: (same)
+─────────────────────
+Block 4: (same)
+─────────────────────
+  ↓
+Final LayerNorm
+  ↓
+Language Model Head
+  ↓
+输出 [B, T, vocab_size]
+```
+
+### 4. 参数量计算
+
+**单个 Transformer Block**:
+```
+MultiHeadAttention:
+  4 heads × (Q/K/V: 128→32) = 49,152
+  Projection: 128×128 = 16,384
+  小计: 65,536
+
+FeedForward:
+  Linear1: 128 × 512 = 65,536
+  Linear2: 512 × 128 = 65,536
+  小计: 131,072
+
+LayerNorm × 2: 256 × 2 = 512
+
+Block Total: ~196,000
+```
+
+**4 层总计**:
+```
+4 × 196,000 = 784,000
++ Embeddings: ~33,000
++ LM Head: ~8,000
+───────────────────
+Total: ~825,000 参数
+```
+
+### 5. V4 vs V3 对比
+
+| 特性 | V3 | V4 |
+|------|----|----|
+| **结构** | 单层 Multi-Head | 4 层 Transformer Block |
+| **参数** | 98,753 | 824,897 |
+| **深度** | 浅 | 深 |
+| **稳定性** | 一般 | 优秀 (Residual + LayerNorm) |
+| **表达力** | 好 | 强大 (多层 + FFN) |
+| **训练难度** | 容易 | 中等 |
+| **收敛速度** | 快 | 稳定 |
+
+### 6. 为什么 V4 更强？
+
+✅ **多层抽象**:
+```
+Layer 1: 学习字符模式
+Layer 2: 学习单词模式
+Layer 3: 学习短语模式
+Layer 4: 学习句子模式
+```
+
+✅ **非线性变换**:
+```
+Attention: 线性组合信息
+FFN: 非线性变换特征
+```
+
+✅ **训练稳定**:
+```
+Residual: 梯度直接流动
+LayerNorm: 分布稳定
+Dropout: 防止过拟合
+```
+
+### 验证 Transformer Block
+
+```bash
+# 测试 V4 模型
+python model.py
+```
+
+输出:
+```
+✅ V4 Transformer (4 layers, 4 heads) 模型初始化完成
+   参数量: 824,897
+   输出形状: [4, 128, 65]  ✓
+   损失: 4.3051  ✓
+   生成: [1, 21]  ✓
 ```
 
 ---

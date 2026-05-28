@@ -1,7 +1,7 @@
 # generate.py
 """
 使用训练好的模型生成文本
-支持 V1 和 V2 模型
+支持 V1、V2、V3 和 V4 模型
 """
 
 import torch
@@ -18,14 +18,15 @@ def print_section(title):
     print("="*60)
 
 
-def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, num_heads=1):
+def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, num_heads=1, n_layer=0):
     """
     加载训练好的模型
     
     Args:
         checkpoint_path: 检查点路径
-        use_attention: 是否使用 attention (V2/V3)
+        use_attention: 是否使用 attention (V2/V3/V4)
         num_heads: attention heads 数量
+        n_layer: transformer layers 数量
         
     Returns:
         model: 加载的模型
@@ -43,7 +44,7 @@ def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, 
     tokenizer = CharTokenizer(text)
     
     # 创建模型
-    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=use_attention, num_heads=num_heads)
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(config.device)
     model.eval()
@@ -90,10 +91,12 @@ def generate_text(model, tokenizer, prompt="", max_new_tokens=500, temperature=0
     return generated_text
 
 
-def interactive_mode(use_attention=True, num_heads=1):
+def interactive_mode(use_attention=True, num_heads=1, n_layer=0):
     """交互式生成模式"""
     if not use_attention:
         version_name = "V1 (Bigram)"
+    elif n_layer > 0:
+        version_name = f"V4 (Transformer, {n_layer} layers, {num_heads} heads)"
     elif num_heads == 1:
         version_name = "V2 (Self-Attention)"
     else:
@@ -103,7 +106,7 @@ def interactive_mode(use_attention=True, num_heads=1):
     
     # 加载模型
     checkpoint_path = 'checkpoints/best_model.pt'
-    model, tokenizer = load_model(checkpoint_path, use_attention=use_attention, num_heads=num_heads)
+    model, tokenizer = load_model(checkpoint_path, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer)
     
     print("\n💡 使用说明:")
     print("   - 输入提示文本，按回车生成")
@@ -139,10 +142,12 @@ def interactive_mode(use_attention=True, num_heads=1):
         print(f"{'─'*60}")
 
 
-def batch_generate(use_attention=True, num_heads=1):
+def batch_generate(use_attention=True, num_heads=1, n_layer=0):
     """批量生成多个样本"""
     if not use_attention:
         version_name = "V1 (Bigram)"
+    elif n_layer > 0:
+        version_name = f"V4 (Transformer, {n_layer} layers, {num_heads} heads)"
     elif num_heads == 1:
         version_name = "V2 (Self-Attention)"
     else:
@@ -151,7 +156,7 @@ def batch_generate(use_attention=True, num_heads=1):
     print_section(f"🎲 批量生成样本 - {version_name}")
     
     # 加载模型
-    model, tokenizer = load_model(use_attention=use_attention, num_heads=num_heads)
+    model, tokenizer = load_model(use_attention=use_attention, num_heads=num_heads, n_layer=n_layer)
     
     temperatures = [0.5, 0.8, 1.0, 1.2]
     num_samples = 3
@@ -173,29 +178,37 @@ def main():
     import sys
     
     # 解析参数
-    use_attention = True  # 默认使用 V3
-    num_heads = config.n_head  # 默认 multi-head
+    use_attention = True  # 默认使用 V4
+    num_heads = config.n_head
+    n_layer = config.n_layer
     mode = 'interactive'
     
     for arg in sys.argv[1:]:
         if arg == 'v1':
             use_attention = False
             num_heads = 1
+            n_layer = 0
         elif arg == 'v2':
             use_attention = True
             num_heads = 1
+            n_layer = 0
         elif arg == 'v3':
             use_attention = True
             num_heads = config.n_head
+            n_layer = 0
+        elif arg == 'v4':
+            use_attention = True
+            num_heads = config.n_head
+            n_layer = config.n_layer
         elif arg == 'batch':
             mode = 'batch'
         elif arg == 'interactive':
             mode = 'interactive'
     
     if mode == 'batch':
-        batch_generate(use_attention, num_heads)
+        batch_generate(use_attention, num_heads, n_layer)
     else:
-        interactive_mode(use_attention, num_heads)
+        interactive_mode(use_attention, num_heads, n_layer)
 
 
 if __name__ == "__main__":

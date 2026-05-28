@@ -1,7 +1,7 @@
 # train.py
 """
 训练语言模型
-支持 V1 (Bigram)、V2 (Self-Attention) 和 V3 (Multi-Head Attention)
+支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention) 和 V4 (Transformer)
 """
 
 import torch
@@ -16,20 +16,28 @@ from dataset import get_batch, tokenizer, train_data, val_data
 import config
 
 
-# 从命令行参数获取版本，默认 V3
+# 从命令行参数获取版本，默认 V4
 USE_ATTENTION = True
-NUM_HEADS = config.n_head  # 默认使用 multi-head
+NUM_HEADS = config.n_head
+N_LAYER = config.n_layer  # V4 使用多层
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'v1':
         USE_ATTENTION = False
         NUM_HEADS = 1
+        N_LAYER = 0
     elif sys.argv[1] == 'v2':
         USE_ATTENTION = True
         NUM_HEADS = 1
+        N_LAYER = 0
     elif sys.argv[1] == 'v3':
         USE_ATTENTION = True
         NUM_HEADS = config.n_head
+        N_LAYER = 0
+    elif sys.argv[1] == 'v4':
+        USE_ATTENTION = True
+        NUM_HEADS = config.n_head
+        N_LAYER = config.n_layer
 
 
 def print_section(title):
@@ -80,6 +88,8 @@ def train():
     """训练模型"""
     if not USE_ATTENTION:
         version_name = "V1 Bigram"
+    elif N_LAYER > 0:
+        version_name = f"V4 Transformer ({N_LAYER} layers, {NUM_HEADS} heads)"
     elif NUM_HEADS == 1:
         version_name = "V2 Self-Attention"
     else:
@@ -101,6 +111,9 @@ def train():
         if NUM_HEADS > 1:
             print(f"   Attention Heads: {NUM_HEADS}")
             print(f"   Head Size: {config.n_embd // NUM_HEADS}")
+        if N_LAYER > 0:
+            print(f"   Transformer Layers: {N_LAYER}")
+            print(f"   Dropout: {config.dropout}")
     
     # 打印数据统计
     print(f"\n📊 数据统计:")
@@ -110,7 +123,7 @@ def train():
     
     # 创建模型
     print_section("🔨 创建模型")
-    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS)
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS, n_layer=N_LAYER)
     model = model.to(config.device)
     
     # 创建优化器

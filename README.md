@@ -8,12 +8,81 @@
 1. ✅ **V1**: Bigram Language Model（已完成）
 2. ✅ **V2**: Single-Head Self-Attention（已完成）
 3. ✅ **V3**: Multi-Head Attention（已完成）
-4. 🔄 **V4**: Feed-Forward 网络
-5. 🔄 **V5**: 完整的 Transformer 架构
+4. ✅ **V4**: Transformer Block（已完成）
+5. 🔄 **V5**: 完整的 GPT 架构
 
 ---
 
-## ✅ V3: Multi-Head Attention - 已完成！
+## ✅ V4: Transformer Block - 已完成！
+
+### 🎉 真正的 Transformer 来了！
+
+**从 V3 到 V4 的质变**:
+```
+V3: 只有 Multi-Head Attention
+V4: 完整 Transformer Block
+    - LayerNorm (稳定训练)
+    - Residual Connection (梯度流动)
+    - Feed-Forward Network (特征变换)
+    - Dropout (防止过拟合)
+    - 可堆叠多层！
+```
+
+### 核心突破
+
+**Transformer Block 结构**:
+```python
+x → LayerNorm → MultiHeadAttention → Residual
+  → LayerNorm → FeedForward → Residual
+```
+
+**为什么需要这些组件？**
+
+| 组件 | 作用 | 解决的问题 |
+|------|------|------------|
+| **LayerNorm** | 归一化 hidden state | 梯度爆炸/消失 |
+| **Residual** | 跳跃连接 `x = x + f(x)` | 深层网络退化 |
+| **FFN** | 两层 MLP (扩展 4 倍) | 非线性特征变换 |
+| **Dropout** | 随机丢弃神经元 | 过拟合 |
+
+### 技术实现
+
+1. **Feed-Forward Network**
+   ```python
+   Linear(n_embd → 4*n_embd)  # 扩展
+   → GELU                      # 平滑激活
+   → Linear(4*n_embd → n_embd)  # 压缩
+   → Dropout
+   ```
+
+2. **Transformer Block**
+   ```python
+   # Attention block
+   x = x + dropout(attention(layernorm(x)))
+   
+   # FFN block  
+   x = x + dropout(ffn(layernorm(x)))
+   ```
+
+3. **可堆叠多层**
+   - 4 层 Transformer blocks
+   - 每层独立学习不同抽象级别
+   - 最后加 LayerNorm
+
+### 参数量对比
+
+| 版本 | 参数量 | Heads | Layers | 训练难度 |
+|------|--------|-------|--------|----------|
+| V1 | 4,225 | - | - | ⭐ |
+| V2 | 82,241 | 1 | 0 | ⭐⭐ |
+| V3 | 98,753 | 4 | 0 | ⭐⭐⭐ |
+| **V4** | **824,897** | **4** | **4** | ⭐⭐⭐⭐ |
+
+V4 参数量暴增到 **82 万**！但训练更稳定。
+
+---
+
+## ✅ V3: Multi-Head Attention
 
 ### 核心突破
 
@@ -80,14 +149,16 @@ V2 (Attention): 看所有之前的 token → 预测下一个
 
 ### 训练结果对比
 
-| 指标 | V1 (Bigram) | V2 (Single-Head) | V3 (Multi-Head) |
-|------|-------------|------------------|-----------------|
-| 参数量 | 4,225 | 82,241 | 98,753 |
-| Attention Heads | - | 1 | 4 |
-| 初始损失 | 4.62 | ~4.2 | ~4.2 |
-| 预期最终损失 | 3.09 | ~2.4 | ~2.1 |
-| 训练时间 | 13秒 | ~50秒 | ~60秒 |
-| 生成质量 | ⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 指标 | V1 | V2 | V3 | V4 |
+|------|----|----|----|----|
+| **参数量** | 4,225 | 82,241 | 98,753 | 824,897 |
+| **Attention Heads** | - | 1 | 4 | 4 |
+| **Layers** | - | 0 | 0 | 4 |
+| **初始损失** | 4.62 | ~4.2 | ~4.2 | ~4.3 |
+| **预期最终损失** | 3.09 | ~2.4 | ~2.1 | ~1.8 |
+| **训练时间** | 13秒 | ~50秒 | ~60秒 | ~2分钟 |
+| **训练稳定性** | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **生成质量** | ⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐⭐ |
 
 ### 生成质量对比
 
@@ -211,14 +282,17 @@ python download_data.py --size 100  # 下载 100MB 数据
 ### 3. 快速测试
 
 ```bash
-# 测试所有组件（包括 V1、V2 和 V3）
+# 测试所有版本（V1、V2、V3、V4）
 python model.py
 ```
 
 ### 4. 训练模型
 
 ```bash
-# 训练 V3 (Multi-Head Attention) - 推荐！
+# 训练 V4 (Transformer) - 推荐！
+python train.py v4
+
+# 或训练 V3 (Multi-Head)
 python train.py v3
 
 # 或训练 V2 (Single-Head)
@@ -231,8 +305,11 @@ python train.py v1
 ### 5. 生成文本
 
 ```bash
-# V3 交互式生成（默认，推荐）
+# V4 交互式生成（默认，推荐）
 python generate.py
+
+# V3 交互式生成
+python generate.py v3
 
 # V2 交互式生成
 python generate.py v2
@@ -240,8 +317,8 @@ python generate.py v2
 # V1 交互式生成
 python generate.py v1
 
-# V3 批量生成
-python generate.py v3 batch
+# V4 批量生成
+python generate.py v4 batch
 ```
 
 ### 6. 比较模型
@@ -251,11 +328,13 @@ python generate.py v3 batch
 python train.py v1
 python train.py v2
 python train.py v3
+python train.py v4
 
 # 对比生成质量
 python generate.py v1
 python generate.py v2
 python generate.py v3
+python generate.py v4
 ```
 
 ---
