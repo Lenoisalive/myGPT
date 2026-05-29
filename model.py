@@ -4,12 +4,156 @@ V1: Bigram Language Model
 V2: Single-Head Self-Attention Language Model
 V3: Multi-Head Self-Attention Language Model
 V4: Transformer Block (with FFN, Residual, LayerNorm)
+V5: BPE Tokenizer + Transformer
+V6: RoPE + RMSNorm + SwiGLU (Modern Architecture)
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+import math
 import config
+
+
+class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization (RMSNorm)
+    
+    优势相比 LayerNorm:
+    - 更简单：不需要计算均值和方差
+    - 更快：计算量更少
+    - 更稳定：训练更稳定
+    - Llama/Mistral 等现代模型都使用 RMSNorm
+    
+    公式: y = x / RMS(x) * scale
+    其中 RMS(x) = sqrt(mean(x^2) + eps)
+    """
+    
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+    
+    def forward(self, x):
+        # x: [B, T, C]
+        # 计算 RMS
+        rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
+        # 归一化并缩放
+        x_normed = x / rms
+        return self.scale * x_normed
+
+
+class RoPE(nn.Module):
+    """
+    Rotary Position Embedding (RoPE)
+    
+    优势相比传统 Position Embedding:
+    - 相对位置编码：直接编码相对位置信息
+    - 外推能力强：可以推广到训练时未见过的序列长度
+    - 参数更少：不需要可学习的位置 embedding 表
+    - GPT-NeoX、Llama、PaLM 等都使用 RoPE
+    
+    核心思想：
+    - 将 query 和 key 向量按维度分组
+    - 每组应用旋转矩阵（rotation matrix）
+    - 旋转角度随位置变化
+    - 使得 attention score 包含相对位置信息
+    """
+    
+    def __init__(self, dim, max_seq_len=2048, base=10000):
+        super().__init__()
+        self.dim = dim
+        self.max_seq_len = max_seq_len
+        self.base = base
+        
+        # 预计算旋转频率
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+        
+        # 预计算 cos 和 sin 值
+        t = torch.arange(max_seq_len, dtype=torch.float32)
+        freqs = torch.outer(t, inv_freq)  # [max_seq_len, dim//2]
+        emb = torch.cat([freqs, freqs], dim=-1)  # [max_seq_len, dim]
+        
+        self.register_buffer('cos_cached', emb.cos())
+        self.register_buffer('sin_cached', emb.sin())
+    
+    def rotate_half(self, x):
+        """将输入的后半部分旋转"""
+        x1, x2 = x[..., :x.shape[-1]//2], x[..., x.shape[-1]//2:]
+        return torch.cat([-x2, x1], dim=-1)
+    
+    def forward(self, x, seq_len=None):
+        """
+        应用 RoPE
+        
+        Args:
+            x: [B, num_heads, T, head_dim] 或 [B, T, dim]
+            seq_len: 序列长度（可选）
+        
+        Returns:
+            [B, num_heads, T, head_dim] 或 [B, T, dim] 应用 RoPE 后的结果
+        """
+        if seq_len is None:
+            seq_len = x.shape[-2]
+        
+        cos = self.cos_cached[:seq_len, ...]
+        sin = self.sin_cached[:seq_len, ...]
+        
+        # 广播到正确的形状
+        if len(x.shape) == 4:  # [B, num_heads, T, head_dim]
+            cos = cos[None, None, :, :]  # [1, 1, T, head_dim]
+            sin = sin[None, None, :, :]
+        else:  # [B, T, dim]
+            cos = cos[None, :, :]  # [1, T, dim]
+            sin = sin[None, :, :]
+        
+        # 应用旋转
+        return (x * cos) + (self.rotate_half(x) * sin)
+
+
+class SwiGLU(nn.Module):
+    """
+    Swish-Gated Linear Unit (SwiGLU)
+    
+    优势相比标准 FFN:
+    - 表达能力更强：门控机制可以选择性地传递信息
+    - 性能更好：在相同参数量下表现更好
+    - Llama、PaLM 等现代模型都使用 SwiGLU
+    
+    公式: SwiGLU(x) = Swish(xW) ⊙ (xV)
+    其中 Swish(x) = x * sigmoid(x)
+         ⊙ 表示逐元素乘法
+    
+    相比标准 FFN:
+    标准: Linear(GELU(Linear(x)))
+    SwiGLU: Linear(Swish(Linear(x)) * Linear(x))
+    """
+    
+    def __init__(self, n_embd, hidden_dim=None):
+        super().__init__()
+        if hidden_dim is None:
+            # SwiGLU 通常使用 8/3 倍扩展（约2.67倍）而不是 4 倍
+            # 这样在相同计算量下参数更多
+            hidden_dim = int(8 * n_embd / 3)
+            # 确保是 256 的倍数（优化内存对齐）
+            hidden_dim = ((hidden_dim + 255) // 256) * 256
+        
+        self.w1 = nn.Linear(n_embd, hidden_dim, bias=False)  # Gate
+        self.w2 = nn.Linear(hidden_dim, n_embd, bias=False)  # Down projection
+        self.w3 = nn.Linear(n_embd, hidden_dim, bias=False)  # Up projection
+        self.dropout = nn.Dropout(config.dropout)
+    
+    def forward(self, x):
+        # x: [B, T, n_embd]
+        # SwiGLU: swish(xW1) * (xW3) then project down with W2
+        swish_gate = F.silu(self.w1(x))  # [B, T, hidden_dim], silu = swish
+        x_up = self.w3(x)                 # [B, T, hidden_dim]
+        x = swish_gate * x_up             # [B, T, hidden_dim]
+        x = self.w2(x)                    # [B, T, n_embd]
+        x = self.dropout(x)
+        return x
 
 
 class Head(nn.Module):
@@ -20,14 +164,23 @@ class Head(nn.Module):
     - Query: 我在寻找什么
     - Key: 我能提供什么
     - Value: 我的信息内容
+    
+    V6 改进:
+    - 支持 RoPE 位置编码
     """
     
-    def __init__(self, head_size):
+    def __init__(self, head_size, use_rope=False):
         super().__init__()
+        self.head_size = head_size
+        self.use_rope = use_rope
+        
         self.key = nn.Linear(config.n_embd, head_size, bias=False)
         self.query = nn.Linear(config.n_embd, head_size, bias=False)
         self.value = nn.Linear(config.n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
+        
+        if use_rope:
+            self.rope = RoPE(head_size, max_seq_len=config.block_size)
         
     def forward(self, x):
         """
@@ -41,9 +194,14 @@ class Head(nn.Module):
         k = self.key(x)    # [B, T, head_size]
         q = self.query(x)  # [B, T, head_size]
         
+        # 应用 RoPE（如果启用）
+        if self.use_rope:
+            q = self.rope(q, seq_len=T)
+            k = self.rope(k, seq_len=T)
+        
         # 计算 attention scores: Q @ K^T
         # [B, T, head_size] @ [B, head_size, T] -> [B, T, T]
-        wei = q @ k.transpose(-2, -1) * (C ** -0.5)  # scaled attention
+        wei = q @ k.transpose(-2, -1) * (self.head_size ** -0.5)  # scaled attention
         
         # 应用 causal mask (只能看到左边的 token)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
@@ -68,11 +226,14 @@ class MultiHeadAttention(nn.Module):
     - head2 可能学习长距离依赖
     - head3 可能学习局部模式
     - head4 可能学习实体关系
+    
+    V6 改进:
+    - 支持 RoPE 位置编码
     """
     
-    def __init__(self, num_heads, head_size):
+    def __init__(self, num_heads, head_size, use_rope=False):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList([Head(head_size, use_rope=use_rope) for _ in range(num_heads)])
         self.proj = nn.Linear(num_heads * head_size, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
         
@@ -123,24 +284,42 @@ class TransformerBlock(nn.Module):
     """
     完整的 Transformer Block
     
-    结构:
+    V4 结构:
         x → LayerNorm → MultiHeadAttention → Residual
           → LayerNorm → FeedForward → Residual
     
+    V6 结构 (use_v6=True):
+        x → RMSNorm → MultiHeadAttention(RoPE) → Residual
+          → RMSNorm → SwiGLU → Residual
+    
     核心组件:
-    - LayerNorm: 稳定训练
+    - V4: LayerNorm, FFN
+    - V6: RMSNorm, SwiGLU, RoPE
     - Residual: 避免梯度消失
     - Attention: 信息交互
-    - FFN: 特征变换
     """
     
-    def __init__(self, n_embd, num_heads):
+    def __init__(self, n_embd, num_heads, use_v6=False):
         super().__init__()
         head_size = n_embd // num_heads
-        self.sa = MultiHeadAttention(num_heads, head_size)
-        self.ffwd = FeedForward(n_embd)
-        self.ln1 = nn.LayerNorm(n_embd)  # Pre-norm (GPT-2 style)
-        self.ln2 = nn.LayerNorm(n_embd)
+        self.use_v6 = use_v6
+        
+        # Attention
+        self.sa = MultiHeadAttention(num_heads, head_size, use_rope=use_v6)
+        
+        # FFN / SwiGLU
+        if use_v6:
+            self.ffwd = SwiGLU(n_embd)
+        else:
+            self.ffwd = FeedForward(n_embd)
+        
+        # Normalization
+        if use_v6:
+            self.ln1 = RMSNorm(n_embd)
+            self.ln2 = RMSNorm(n_embd)
+        else:
+            self.ln1 = nn.LayerNorm(n_embd)
+            self.ln2 = nn.LayerNorm(n_embd)
     
     def forward(self, x):
         """
@@ -165,36 +344,48 @@ class BigramLanguageModel(nn.Module):
     V2: Self-Attention 语言模型 (use_attention=True, num_heads=1, n_layer=0)
     V3: Multi-Head Attention 语言模型 (use_attention=True, num_heads>1, n_layer=0)
     V4: Transformer Block 语言模型 (use_attention=True, num_heads>1, n_layer>0)
+    V5: BPE + Transformer (use_attention=True, num_heads>1, n_layer>0)
+    V6: RoPE + RMSNorm + SwiGLU (use_attention=True, num_heads>1, n_layer>0, use_v6=True)
     """
     
-    def __init__(self, vocab_size, use_attention=False, num_heads=1, n_layer=0):
+    def __init__(self, vocab_size, use_attention=False, num_heads=1, n_layer=0, use_v6=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.use_attention = use_attention
         self.num_heads = num_heads
         self.n_layer = n_layer
+        self.use_v6 = use_v6
         
         if use_attention:
-            # V2/V3/V4: Attention-based 版本
+            # V2/V3/V4/V5/V6: Attention-based 版本
             self.token_embedding_table = nn.Embedding(vocab_size, config.n_embd)
-            self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
+            
+            # V6 使用 RoPE，不需要 position embedding
+            if not use_v6:
+                self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
             
             if n_layer > 0:
-                # V4: Transformer Blocks
+                # V4/V5/V6: Transformer Blocks
                 self.blocks = nn.Sequential(*[
-                    TransformerBlock(config.n_embd, num_heads) 
+                    TransformerBlock(config.n_embd, num_heads, use_v6=use_v6) 
                     for _ in range(n_layer)
                 ])
-                self.ln_f = nn.LayerNorm(config.n_embd)  # Final layer norm
-                version_name = f"V4 Transformer ({n_layer} layers, {num_heads} heads)"
+                
+                # Final layer norm
+                if use_v6:
+                    self.ln_f = RMSNorm(config.n_embd)
+                    version_name = f"V6 Modern Transformer ({n_layer} layers, {num_heads} heads) [RoPE + RMSNorm + SwiGLU]"
+                else:
+                    self.ln_f = nn.LayerNorm(config.n_embd)
+                    version_name = f"V4 Transformer ({n_layer} layers, {num_heads} heads)"
             elif num_heads == 1:
                 # V2: Single-Head
-                self.sa_head = Head(config.n_embd)
+                self.sa_head = Head(config.n_embd, use_rope=use_v6)
                 version_name = "V2 Self-Attention"
             else:
                 # V3: Multi-Head
                 head_size = config.n_embd // num_heads
-                self.sa_head = MultiHeadAttention(num_heads, head_size)
+                self.sa_head = MultiHeadAttention(num_heads, head_size, use_rope=use_v6)
                 version_name = f"V3 Multi-Head Attention ({num_heads} heads)"
             
             self.lm_head = nn.Linear(config.n_embd, vocab_size)
@@ -211,6 +402,8 @@ class BigramLanguageModel(nn.Module):
         if use_attention:
             if n_layer > 0:
                 print(f"   Transformer Layers: {n_layer}")
+                if use_v6:
+                    print(f"   架构改进: RoPE + RMSNorm + SwiGLU")
             if num_heads > 1:
                 print(f"   Attention Heads: {num_heads}")
         print(f"   参数量: {self.count_parameters():,}")
@@ -234,13 +427,18 @@ class BigramLanguageModel(nn.Module):
         B, T = idx.shape
         
         if self.use_attention:
-            # V2/V3/V4: Attention 路径
+            # V2/V3/V4/V5/V6: Attention 路径
             tok_emb = self.token_embedding_table(idx)  # [B, T, n_embd]
-            pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))  # [T, n_embd]
-            x = tok_emb + pos_emb  # [B, T, n_embd]
+            
+            # V6 使用 RoPE，不需要 position embedding
+            if self.use_v6:
+                x = tok_emb  # [B, T, n_embd]
+            else:
+                pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))  # [T, n_embd]
+                x = tok_emb + pos_emb  # [B, T, n_embd]
             
             if self.n_layer > 0:
-                # V4: 通过 Transformer blocks
+                # V4/V5/V6: 通过 Transformer blocks
                 x = self.blocks(x)  # [B, T, n_embd]
                 x = self.ln_f(x)    # Final layer norm
             else:

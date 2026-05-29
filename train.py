@@ -1,7 +1,7 @@
 # train.py
 """
 训练语言模型
-支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention)、V4 (Transformer) 和 V5 (BPE)
+支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention)、V4 (Transformer)、V5 (BPE) 和 V6 (RoPE + RMSNorm + SwiGLU)
 """
 
 import torch
@@ -20,6 +20,7 @@ USE_ATTENTION = True
 NUM_HEADS = config.n_head
 N_LAYER = config.n_layer  # V4 使用多层
 IS_V5 = False
+IS_V6 = False
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'v1':
@@ -43,11 +44,16 @@ if len(sys.argv) > 1:
         NUM_HEADS = config.n_head
         N_LAYER = config.n_layer
         IS_V5 = True
+    elif sys.argv[1] == 'v6':
+        USE_ATTENTION = True
+        NUM_HEADS = config.n_head
+        N_LAYER = config.n_layer
+        IS_V6 = True
 
 # 根据版本导入相应的数据集
-if IS_V5:
+if IS_V5 or IS_V6:
     from dataset_v5 import get_batch, tokenizer, train_data, val_data
-    print("✅ 使用 BPE Tokenizer (V5)")
+    print(f"✅ 使用 BPE Tokenizer (V{5 if IS_V5 else 6})")
 else:
     from dataset import get_batch, tokenizer, train_data, val_data
     print("✅ 使用 Char Tokenizer (V1-V4)")
@@ -101,6 +107,8 @@ def train():
     """训练模型"""
     if not USE_ATTENTION:
         version_name = "V1 Bigram"
+    elif IS_V6:
+        version_name = f"V6 Modern Transformer ({N_LAYER} layers, {NUM_HEADS} heads) [RoPE + RMSNorm + SwiGLU]"
     elif IS_V5:
         version_name = f"V5 Transformer + BPE ({N_LAYER} layers, {NUM_HEADS} heads)"
     elif N_LAYER > 0:
@@ -138,7 +146,7 @@ def train():
     
     # 创建模型
     print_section("🔨 创建模型")
-    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS, n_layer=N_LAYER)
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS, n_layer=N_LAYER, use_v6=IS_V6)
     model = model.to(config.device)
     
     # 创建优化器
@@ -212,7 +220,9 @@ def train():
     
     # 训练完成
     total_time = time.time() - start_time
-    if IS_V5:
+    if IS_V6:
+        version_suffix = "v6"
+    elif IS_V5:
         version_suffix = "v5"
     elif USE_ATTENTION:
         version_suffix = "v2"

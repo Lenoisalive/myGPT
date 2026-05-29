@@ -9,15 +9,141 @@
 2. ✅ **V2**: Single-Head Self-Attention（已完成）
 3. ✅ **V3**: Multi-Head Attention（已完成）
 4. ✅ **V4**: Transformer Block（已完成）
-5. 🚀 **V5-V10**: [升级路线图](ROADMAP.md) - 从玩具 GPT → 实用 GPT
+5. ✅ **V5**: BPE Tokenizer（已完成）
+6. ✅ **V6**: RoPE + RMSNorm + SwiGLU（已完成）✨ **NEW!**
+7. 🚀 **V7-V10**: [升级路线图](ROADMAP.md) - 迈向生产级 GPT
 
 > 📚 **查看完整升级计划**: [ROADMAP.md](ROADMAP.md)
-> - V5: BPE Tokenizer (训练提速 2-3x)
-> - V6: RoPE + RMSNorm + SwiGLU
+> - ✅ V5: BPE Tokenizer (训练提速 2-3x)
+> - ✅ V6: RoPE + RMSNorm + SwiGLU (现代架构) 
 > - V7: Better Training (Warmup + Cosine Decay)
 > - V8: Better Inference (KV Cache + Sampling)
 > - V9: FlashAttention (速度提升 5-10x)
 > - V10: Instruction Tuning (对话能力)
+
+---
+
+## 🌟 V6: Modern Transformer Architecture - 最新完成！
+
+### 🎊 现代 LLM 的标准架构
+
+**从 V5 到 V6 的架构革命**:
+```
+V5: 传统 Transformer
+    - Absolute Position Embedding
+    - LayerNorm
+    - Standard FFN (GELU)
+
+V6: 现代 Transformer ⭐
+    - RoPE (Rotary Position Embedding)
+    - RMSNorm (Root Mean Square Norm)
+    - SwiGLU (Swish-Gated Linear Unit)
+```
+
+**被这些模型使用**: Llama 2/3, Mistral, PaLM, GPT-NeoX
+
+### 三大核心改进
+
+#### 1️⃣ RoPE (Rotary Position Embedding)
+
+**优势**:
+- ✅ **相对位置编码**: 直接编码 token 之间的相对位置
+- ✅ **外推能力强**: 可推广到训练时未见过的序列长度
+- ✅ **零参数**: 不需要可学习的位置 embedding
+- ✅ **理论完备**: 基于旋转矩阵的数学基础
+
+**原理**:
+```python
+# 传统: Absolute Position
+x = token_emb + position_emb
+
+# RoPE: 通过旋转编码位置
+q_rotated = rotate(query, position)
+k_rotated = rotate(key, position)
+attention = softmax(q_rotated @ k_rotated.T)
+```
+
+#### 2️⃣ RMSNorm (Root Mean Square Normalization)
+
+**优势**:
+- ✅ **更简单**: 不需要计算均值和方差
+- ✅ **更快**: 计算量更少 (~20% 提速)
+- ✅ **更稳定**: 训练更稳定，收敛更快
+- ✅ **省内存**: 减少中间激活的存储
+
+**对比**:
+```python
+# LayerNorm
+mean = x.mean()
+var = x.var()
+x_norm = (x - mean) / sqrt(var + eps)
+
+# RMSNorm (更简单！)
+rms = sqrt(mean(x^2) + eps)
+x_norm = x / rms
+```
+
+#### 3️⃣ SwiGLU (Swish-Gated Linear Unit)
+
+**优势**:
+- ✅ **表达能力更强**: 门控机制选择性传递信息
+- ✅ **性能更好**: 相同参数量下效果更好
+- ✅ **非线性更丰富**: Swish 激活函数更平滑
+
+**对比**:
+```python
+# 标准 FFN
+FFN(x) = Linear(GELU(Linear(x)))
+
+# SwiGLU (更强大！)
+SwiGLU(x) = Linear(Swish(Linear(x)) ⊙ Linear(x))
+```
+
+### 快速开始 V6
+
+```bash
+# 1. 准备 BPE 数据（如果还没有）
+python prepare_bpe_data.py
+
+# 2. 训练 V6 模型
+python train.py v6
+
+# 3. 生成文本
+python generate.py v6
+```
+
+**预期改进**:
+- 训练稳定性: ⬆️ 显著提升
+- 收敛速度: ⬆️ 更快收敛
+- 生成质量: ⬆️ 更好的长程依赖
+- 外推能力: ⬆️ 更长序列支持
+
+### V6 技术细节
+
+**架构对比**:
+
+| 组件 | V4/V5 (传统) | V6 (现代) | 改进 |
+|------|-------------|----------|------|
+| **Position** | Absolute Embedding | RoPE | 相对位置 + 外推 |
+| **Normalization** | LayerNorm | RMSNorm | 简单 + 快速 |
+| **FFN** | Linear-GELU-Linear | SwiGLU | 表达力更强 |
+| **参数量** | 100% | ~103% | 略增但效果好 |
+
+**代码示例**:
+```python
+# V6 Transformer Block
+class TransformerBlock(nn.Module):
+    def __init__(self, n_embd, num_heads, use_v6=True):
+        self.sa = MultiHeadAttention(..., use_rope=True)  # RoPE
+        self.ffwd = SwiGLU(n_embd)                        # SwiGLU
+        self.ln1 = RMSNorm(n_embd)                        # RMSNorm
+        self.ln2 = RMSNorm(n_embd)
+    
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))    # RoPE in attention
+        x = x + self.ffwd(self.ln2(x))  # SwiGLU FFN
+        return x
+```
 
 ---
 

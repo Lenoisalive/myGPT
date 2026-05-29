@@ -4,16 +4,17 @@
 1. [项目概述](#项目概述)
 2. [版本对比](#版本对比)
 3. [快速开始](#快速开始)
-4. [训练模型](#训练模型)
-5. [生成文本](#生成文本)
-6. [V2 Self-Attention 详解](#v2-self-attention-详解)
-7. [常见问题](#常见问题)
+4. [V6 使用指南](#v6-使用指南-new)
+5. [训练模型](#训练模型)
+6. [生成文本](#生成文本)
+7. [架构详解](#架构详解)
+8. [常见问题](#常见问题)
 
 ---
 
 ## 项目概述
 
-这是一个从零开始实现的 GPT 语言模型项目，包含四个版本：
+这是一个从零开始实现的 GPT 语言模型项目，现已包含六个版本：
 
 ### V1: Bigram Model
 **核心**: `P(next_token | current_token)`
@@ -38,6 +39,224 @@
 - 完整的 Transformer 结构
 - 可堆叠多层，训练更稳定
 - 参数量: 824,897
+
+### V5: BPE Tokenizer ✨
+**核心**: BPE + Transformer
+- GPT-2 级别的 tokenization
+- 序列长度减少 80%
+- 训练速度提升 2-3x
+- 词汇表: 50,257
+
+### V6: Modern Architecture ⭐ **NEW!**
+**核心**: RoPE + RMSNorm + SwiGLU
+- Llama/Mistral 同款架构
+- 相对位置编码（RoPE）
+- 更快的归一化（RMSNorm）
+- 更强的 FFN（SwiGLU）
+- 参数量: ~850,000
+
+---
+
+## 版本对比
+
+| 特性 | V1 | V2 | V3 | V4 | V5 | V6 |
+|------|----|----|----|----|----|---|
+| **Tokenizer** | Char | Char | Char | Char | **BPE** | **BPE** |
+| **Vocab Size** | 65 | 65 | 65 | 65 | **50K** | **50K** |
+| **Position** | ❌ | Absolute | Absolute | Absolute | Absolute | **RoPE** ⭐ |
+| **Attention** | ❌ | Single | Multi (4) | Multi (4) | Multi (4) | Multi (4) |
+| **Layers** | 0 | 0 | 0 | 4 | 4 | 4 |
+| **Norm** | ❌ | ❌ | ❌ | LayerNorm | LayerNorm | **RMSNorm** ⭐ |
+| **FFN** | ❌ | ❌ | ❌ | GELU | GELU | **SwiGLU** ⭐ |
+| **参数量** | 4K | 82K | 98K | 825K | 6.5M | 6.6M |
+| **训练速度** | 快 | 中 | 中 | 慢 | **快** | **快** |
+| **生成质量** | ⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐⭐⭐ |
+
+---
+
+## V6 使用指南 ⭐ **NEW!**
+
+### 什么是 V6？
+
+V6 实现了**现代 LLM 的标准架构**，被 Llama 2/3、Mistral、PaLM 等顶级模型使用。
+
+### 核心改进
+
+#### 1. RoPE (Rotary Position Embedding)
+```python
+# 传统方法: 绝对位置编码
+x = token_emb + position_emb  # 学习的位置表
+
+# V6: 相对位置编码
+q = rotate(query, position)   # 通过旋转编码
+k = rotate(key, position)
+attention = q @ k.T            # 自然包含相对位置
+```
+
+**优势**:
+- ✅ 相对位置信息（更符合语言特性）
+- ✅ 外推到更长序列（训练 256，推理 512+）
+- ✅ 零参数（不需要学习位置表）
+
+#### 2. RMSNorm (Root Mean Square Normalization)
+```python
+# LayerNorm: 复杂
+mean = x.mean()
+var = x.var()
+norm = (x - mean) / sqrt(var)
+
+# RMSNorm: 简单 ⚡
+rms = sqrt(mean(x^2))
+norm = x / rms
+```
+
+**优势**:
+- ✅ 计算更快（~20% 提速）
+- ✅ 训练更稳定
+- ✅ 代码更简洁
+
+#### 3. SwiGLU (Swish-Gated Linear Unit)
+```python
+# 标准 FFN
+out = Linear(GELU(Linear(x)))
+
+# SwiGLU: 门控机制 🚪
+gate = Swish(Linear1(x))
+up = Linear2(x)
+out = Linear3(gate * up)  # 门控选择性传递
+```
+
+**优势**:
+- ✅ 表达能力更强
+- ✅ 相同参数下效果更好
+- ✅ 非线性更丰富
+
+### 快速开始
+
+#### 步骤 1: 准备 BPE 数据
+
+```bash
+# 如果还没有 BPE 数据
+python prepare_bpe_data.py
+```
+
+#### 步骤 2: 训练 V6 模型
+
+```bash
+python train.py v6
+```
+
+**预期输出**:
+```
+✅ 使用 BPE Tokenizer (V6)
+============================================================
+  🚀 开始训练 V6 Modern Transformer (4 layers, 4 heads) 
+     [RoPE + RMSNorm + SwiGLU] Language Model
+============================================================
+
+📋 训练配置:
+   模型版本: V6 Modern Transformer
+   架构改进: RoPE + RMSNorm + SwiGLU
+   ...
+```
+
+#### 步骤 3: 生成文本
+
+```bash
+python generate.py v6
+```
+
+**交互示例**:
+```
+============================================================
+  🎮 交互式生成模式 - V6 (Modern Transformer)
+     [RoPE + RMSNorm + SwiGLU]
+============================================================
+
+💬 提示: Once upon a time
+
+⏳ 正在生成...
+────────────────────────────────────────────────────────
+Once upon a time, in a land far beyond the mountains,
+there lived a wise old wizard who possessed the ancient
+knowledge of magic and mystery...
+────────────────────────────────────────────────────────
+```
+
+### V6 vs V5 对比
+
+| 指标 | V5 (传统) | V6 (现代) | 改进 |
+|------|----------|----------|------|
+| **位置编码** | 绝对位置表 | RoPE 旋转编码 | 相对位置 + 外推 |
+| **归一化** | LayerNorm | RMSNorm | 快 20% |
+| **FFN** | Linear-GELU-Linear | SwiGLU | 表达力 ⬆️ |
+| **训练稳定性** | 好 | **更好** | ⬆️ |
+| **收敛速度** | 中等 | **更快** | ⬆️ |
+| **长序列能力** | 固定长度 | **可外推** | ⬆️ |
+| **参数量** | 6.5M | 6.6M | +1.5% |
+
+### 技术细节
+
+**V6 Transformer Block 结构**:
+```
+Input
+  ↓
+RMSNorm  ←─────────────┐
+  ↓                     │
+MultiHeadAttention      │
+  (with RoPE)          │
+  ↓                     │
+Residual  ──────────────┘
+  ↓
+RMSNorm  ←─────────────┐
+  ↓                     │
+SwiGLU                 │
+  ↓                     │
+Residual  ──────────────┘
+  ↓
+Output
+```
+
+**RoPE 数学原理**:
+```
+对于位置 m 的 query/key:
+q_m = [q_0, q_1, ..., q_d]
+
+应用旋转:
+q'_m = R(θ, m) · q_m
+
+其中 R 是旋转矩阵，θ 是频率
+
+结果: q'_m @ k'_n 自动包含 (m-n) 相对位置信息
+```
+
+### 最佳实践
+
+1. **训练设置**
+   ```python
+   # config.py
+   batch_size = 64        # V6 训练更稳定，可用大 batch
+   block_size = 256       # RoPE 支持外推，可训练更长
+   learning_rate = 3e-4   # 标准学习率
+   max_iters = 5000       # 根据数据量调整
+   ```
+
+2. **生成设置**
+   ```bash
+   # 温度控制创造性
+   python generate.py v6  # 交互模式，默认 temp=0.8
+   
+   # 调整温度
+   temp 0.5  # 更保守，更准确
+   temp 1.2  # 更创造性，更多样
+   ```
+
+3. **序列长度外推**
+   ```python
+   # V6 可以推理时使用更长序列
+   # 训练: block_size=256
+   # 推理: 可以到 512 或更长（RoPE 的优势）
+   ```
 
 ---
 
