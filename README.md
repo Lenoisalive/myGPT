@@ -147,6 +147,187 @@ class TransformerBlock(nn.Module):
 
 ---
 
+## 🎓 V7: Better Training Strategy - 最新完成！
+
+### 📈 学习率调度的艺术
+
+**从 V6 到 V7 的训练优化**:
+```
+V6: 固定学习率
+    - learning_rate = 3e-4 (始终不变)
+
+V7: 动态学习率 ⭐
+    - Warmup: 0 → max_lr (平滑启动)
+    - Cosine Decay: max_lr → min_lr (优雅收敛)
+    - Min LR: 持续微调
+```
+
+**被这些模型使用**: GPT-3, Llama, BERT, T5, 几乎所有现代 LLM
+
+### 两大核心技术
+
+#### 1️⃣ Warmup (学习率预热)
+
+**为什么需要 Warmup？**
+
+训练初期的问题：
+- ❌ 参数随机初始化
+- ❌ 梯度可能非常大
+- ❌ 直接用大学习率 → 训练不稳定/爆炸
+
+Warmup 的解决方案：
+- ✅ 学习率从 0 线性增长到 max_lr
+- ✅ 给模型时间"适应"数据分布
+- ✅ 避免训练初期的不稳定
+
+**过程**:
+```
+Step 0-100: lr 从 0 → 3e-4 (线性增长)
+Step 100+:  正常训练
+```
+
+#### 2️⃣ Cosine Decay (余弦衰减)
+
+**为什么需要学习率衰减？**
+
+训练后期的需求：
+- ✅ 大学习率: 快速探索 → 找到好的区域
+- ✅ 小学习率: 精细调优 → 收敛到最优
+
+Cosine Decay 的优势：
+- ✅ **平滑下降**: 不是突然降低，而是平滑过渡
+- ✅ **数学优雅**: 余弦曲线，自然衰减
+- ✅ **效果最好**: 实验证明优于阶梯/指数衰减
+
+**公式**:
+```python
+# 衰减进度
+decay_ratio = (step - warmup_steps) / (total_steps - warmup_steps)
+
+# 余弦系数 (从 1.0 平滑降到 0.0)
+coeff = 0.5 * (1.0 + cos(π * decay_ratio))
+
+# 当前学习率
+lr = min_lr + coeff * (max_lr - min_lr)
+```
+
+**学习率曲线**:
+```
+lr
+ │
+ │  ┌─────╲
+ │ /       ╲
+ │/         ╲___
+ └──────────────→ step
+   │   │      │
+ Warmup │  Decay
+     Hold
+```
+
+### 快速开始 V7
+
+```bash
+# 1. 准备 BPE 数据（如果还没有）
+python prepare_bpe_data.py
+
+# 2. 训练 V7 模型（使用 Warmup + Cosine Decay）
+python train.py v7
+
+# 3. 生成文本
+python generate.py v7
+```
+
+**预期改进**:
+- 训练稳定性: ⬆️ 显著提升（无爆炸）
+- 收敛速度: ⬆️ 更快收敛到更低损失
+- 最终性能: ⬆️ 更好的验证损失
+- 训练曲线: ⬆️ 更平滑，无震荡
+
+### V7 配置详解
+
+**在 `config.py` 中的配置**:
+```python
+# V7: Better Training 配置
+learning_rate = 3e-4    # 最大学习率
+min_lr = 3e-5           # 最小学习率 (max_lr 的 1/10)
+warmup_iters = 100      # Warmup 步数
+lr_decay_iters = 5000   # 总衰减步数
+use_warmup = True       # 启用 Warmup
+use_cosine_decay = True # 启用 Cosine Decay
+```
+
+**训练过程示例**:
+```
+📈 步数     0/5000
+   训练损失: 10.9876
+   验证损失: 10.9854
+   学习率: 0.000003     ← Warmup 开始
+
+📈 步数   100/5000
+   训练损失: 6.5432
+   验证损失: 6.5123
+   学习率: 0.000300     ← Warmup 完成
+
+📈 步数  2500/5000
+   训练损失: 2.1234
+   验证损失: 2.3456
+   学习率: 0.000165     ← Cosine Decay 中
+
+📈 步数  5000/5000
+   训练损失: 1.2345
+   验证损失: 1.4567
+   学习率: 0.000030     ← 衰减到最小值
+```
+
+### V7 技术细节
+
+**与其他版本对比**:
+
+| 版本 | 学习率策略 | 训练稳定性 | 最终性能 |
+|------|-----------|-----------|---------|
+| **V4/V5** | 固定 3e-4 | 中等 | 基准 |
+| **V6** | 固定 3e-4 | 好 | 好 |
+| **V7** | Warmup + Decay | **最好** | **最好** |
+
+**代码实现**:
+```python
+def get_lr(iter, use_warmup=True, use_cosine_decay=True):
+    # 1. Warmup phase
+    if use_warmup and iter < warmup_iters:
+        return max_lr * (iter + 1) / warmup_iters
+    
+    # 2. Cosine decay phase
+    if use_cosine_decay:
+        decay_ratio = (iter - warmup_iters) / (lr_decay_iters - warmup_iters)
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return min_lr + coeff * (max_lr - min_lr)
+    
+    # 3. Constant
+    return max_lr
+
+# 在训练循环中
+for iter in range(max_iters):
+    # 更新学习率
+    lr = get_lr(iter)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    
+    # ... 训练步骤 ...
+```
+
+**训练日志中会包含学习率**:
+```json
+{
+  "iter": 1000,
+  "train_loss": 2.1234,
+  "val_loss": 2.3456,
+  "learning_rate": 0.000287,  ← 学习率记录
+  "elapsed_time": 120.5
+}
+```
+
+---
+
 ## 🚀 快速开始 - V5 升级
 
 **立即升级到 BPE Tokenizer，训练提速 2-3 倍！**

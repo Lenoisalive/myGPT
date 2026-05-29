@@ -1,7 +1,7 @@
 # train.py
 """
 训练语言模型
-支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention)、V4 (Transformer)、V5 (BPE) 和 V6 (RoPE + RMSNorm + SwiGLU)
+支持 V1 (Bigram)、V2 (Self-Attention)、V3 (Multi-Head Attention)、V4 (Transformer)、V5 (BPE)、V6 (RoPE + RMSNorm + SwiGLU) 和 V7 (Better Training)
 """
 
 import torch
@@ -11,6 +11,7 @@ import time
 import json
 import os
 import sys
+import math
 from model import BigramLanguageModel
 import config
 
@@ -21,6 +22,7 @@ NUM_HEADS = config.n_head
 N_LAYER = config.n_layer  # V4 使用多层
 IS_V5 = False
 IS_V6 = False
+IS_V7 = False
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'v1':
@@ -49,11 +51,16 @@ if len(sys.argv) > 1:
         NUM_HEADS = config.n_head
         N_LAYER = config.n_layer
         IS_V6 = True
+    elif sys.argv[1] == 'v7':
+        USE_ATTENTION = True
+        NUM_HEADS = config.n_head
+        N_LAYER = config.n_layer
+        IS_V7 = True
 
 # 根据版本导入相应的数据集
-if IS_V5 or IS_V6:
+if IS_V5 or IS_V6 or IS_V7:
     from dataset_v5 import get_batch, tokenizer, train_data, val_data
-    print(f"✅ 使用 BPE Tokenizer (V{5 if IS_V5 else 6})")
+    print(f"✅ 使用 BPE Tokenizer (V{5 if IS_V5 else (6 if IS_V6 else 7)})")
 else:
     from dataset import get_batch, tokenizer, train_data, val_data
     print("✅ 使用 Char Tokenizer (V1-V4)")
@@ -103,10 +110,64 @@ def format_time(seconds):
         return f"{seconds/3600:.1f}小时"
 
 
+def get_lr(iter, use_warmup=False, use_cosine_decay=False):
+    """
+    获取当前迭代的学习率
+    
+    V7 改进: Warmup + Cosine Decay
+    
+    学习率调度策略:
+    1. Warmup (0 to warmup_iters): 线性增长从 0 到 max_lr
+       - 好处: 避免训练初期梯度过大导致的不稳定
+       - 让模型有时间"适应"数据
+    
+    2. Cosine Decay (warmup_iters to lr_decay_iters): 余弦衰减从 max_lr 到 min_lr
+       - 好处: 平滑的学习率下降
+       - 后期小学习率有助于精细调优
+    
+    3. Constant (after lr_decay_iters): 保持 min_lr
+       - 好处: 持续微调，不会完全停止学习
+    
+    Args:
+        iter: 当前迭代次数
+        use_warmup: 是否使用 warmup
+        use_cosine_decay: 是否使用 cosine decay
+    
+    Returns:
+        当前学习率
+    """
+    max_lr = config.learning_rate
+    min_lr = config.min_lr
+    warmup_iters = config.warmup_iters
+    lr_decay_iters = config.lr_decay_iters
+    
+    # 1) Warmup phase: 线性增长
+    if use_warmup and iter < warmup_iters:
+        return max_lr * (iter + 1) / warmup_iters
+    
+    # 2) 如果超过衰减步数，返回最小学习率
+    if iter > lr_decay_iters:
+        return min_lr
+    
+    # 3) Cosine decay phase
+    if use_cosine_decay:
+        # 计算衰减进度 (0 到 1)
+        decay_ratio = (iter - warmup_iters) / (lr_decay_iters - warmup_iters)
+        assert 0 <= decay_ratio <= 1
+        # 余弦衰减: 从 1.0 平滑降到 0.0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return min_lr + coeff * (max_lr - min_lr)
+    
+    # 4) 不使用 cosine decay，保持最大学习率
+    return max_lr
+
+
 def train():
     """训练模型"""
     if not USE_ATTENTION:
         version_name = "V1 Bigram"
+    elif IS_V7:
+        version_name = f"V7 Better Training ({N_LAYER} layers, {NUM_HEADS} heads) [Warmup + Cosine Decay]"
     elif IS_V6:
         version_name = f"V6 Modern Transformer ({N_LAYER} layers, {NUM_HEADS} heads) [RoPE + RMSNorm + SwiGLU]"
     elif IS_V5:
@@ -128,6 +189,10 @@ def train():
     print(f"   上下文长度: {config.block_size}")
     print(f"   最大迭代: {config.max_iters}")
     print(f"   学习率: {config.learning_rate}")
+    if IS_V7:
+        print(f"   Warmup 步数: {config.warmup_iters}")
+        print(f"   衰减步数: {config.lr_decay_iters}")
+        print(f"   最小学习率: {config.min_lr}")
     print(f"   评估间隔: {config.eval_interval}")
     if USE_ATTENTION:
         print(f"   嵌入维度: {config.n_embd}")
@@ -146,7 +211,8 @@ def train():
     
     # 创建模型
     print_section("🔨 创建模型")
-    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS, n_layer=N_LAYER, use_v6=IS_V6)
+    # V7 使用 V6 的架构改进
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=USE_ATTENTION, num_heads=NUM_HEADS, n_layer=N_LAYER, use_v6=(IS_V6 or IS_V7))
     model = model.to(config.device)
     
     # 创建优化器
@@ -161,6 +227,12 @@ def train():
     training_log = []  # 保存训练日志
     
     for iter in range(config.max_iters):
+        # V7: 更新学习率
+        if IS_V7:
+            lr = get_lr(iter, use_warmup=config.use_warmup, use_cosine_decay=config.use_cosine_decay)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+        
         # 定期评估
         if iter % config.eval_interval == 0 or iter == config.max_iters - 1:
             losses = estimate_loss(model)
@@ -169,15 +241,21 @@ def train():
             print(f"\n📈 步数 {iter:5d}/{config.max_iters}")
             print(f"   训练损失: {losses['train']:.4f}")
             print(f"   验证损失: {losses['val']:.4f}")
+            if IS_V7:
+                current_lr = optimizer.param_groups[0]['lr']
+                print(f"   学习率: {current_lr:.6f}")
             print(f"   用时: {format_time(elapsed)}")
             
             # 记录日志
-            training_log.append({
+            log_entry = {
                 'iter': iter,
                 'train_loss': float(losses['train']),
                 'val_loss': float(losses['val']),
                 'elapsed_time': elapsed
-            })
+            }
+            if IS_V7:
+                log_entry['learning_rate'] = float(optimizer.param_groups[0]['lr'])
+            training_log.append(log_entry)
             
             # 保存最佳模型
             if losses['val'] < best_val_loss:
@@ -220,7 +298,9 @@ def train():
     
     # 训练完成
     total_time = time.time() - start_time
-    if IS_V6:
+    if IS_V7:
+        version_suffix = "v7"
+    elif IS_V6:
         version_suffix = "v6"
     elif IS_V5:
         version_suffix = "v5"

@@ -12,3 +12,10 @@ n_layer = 4
 dropout = 0.2
 
 device = "mps"  # 如果没有 GPU，改成 "cpu"
+
+# V7: Better Training 配置
+warmup_iters = 100      # Warmup 步数 (学习率线性增长)
+lr_decay_iters = 5000   # 学习率衰减总步数
+min_lr = 3e-5           # 最小学习率 (max_lr 的 1/10)
+use_warmup = True       # 是否使用 warmup
+use_cosine_decay = True # 是否使用 cosine decay

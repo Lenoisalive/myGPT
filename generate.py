@@ -1,7 +1,7 @@
 # generate.py
 """
 使用训练好的模型生成文本
-支持 V1、V2、V3、V4、V5 和 V6 模型
+支持 V1、V2、V3、V4、V5、V6 和 V7 模型
 """
 
 import torch
@@ -18,17 +18,18 @@ def print_section(title):
     print("="*60)
 
 
-def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False):
+def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False, is_v7=False):
     """
     加载训练好的模型
     
     Args:
         checkpoint_path: 检查点路径
-        use_attention: 是否使用 attention (V2/V3/V4/V5/V6)
+        use_attention: 是否使用 attention (V2/V3/V4/V5/V6/V7)
         num_heads: attention heads 数量
         n_layer: transformer layers 数量
         is_v5: 是否是 V5 (BPE) 模型
         is_v6: 是否是 V6 (RoPE + RMSNorm + SwiGLU) 模型
+        is_v7: 是否是 V7 (Better Training) 模型
         
     Returns:
         model: 加载的模型
@@ -41,7 +42,7 @@ def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, 
     checkpoint = torch.load(checkpoint_path, map_location=config.device)
     
     # 重建 tokenizer
-    if is_v5 or is_v6:
+    if is_v5 or is_v6 or is_v7:
         print("🔤 使用 BPE Tokenizer")
         tokenizer = BPETokenizer("gpt2")
     else:
@@ -50,8 +51,9 @@ def load_model(checkpoint_path='checkpoints/best_model.pt', use_attention=True, 
             text = f.read()
         tokenizer = CharTokenizer(text)
     
-    # 创建模型
-    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, use_v6=is_v6)
+    # 创建模型 (V7 使用 V6 的架构)
+    use_v6_arch = is_v6 or is_v7
+    model = BigramLanguageModel(tokenizer.vocab_size, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, use_v6=use_v6_arch)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(config.device)
     model.eval()
@@ -98,10 +100,12 @@ def generate_text(model, tokenizer, prompt="", max_new_tokens=500, temperature=0
     return generated_text
 
 
-def interactive_mode(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False):
+def interactive_mode(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False, is_v7=False):
     """交互式生成模式"""
     if not use_attention:
         version_name = "V1 (Bigram)"
+    elif is_v7:
+        version_name = f"V7 (Better Training, {n_layer} layers, {num_heads} heads) [Warmup + Cosine Decay]"
     elif is_v6:
         version_name = f"V6 (Modern Transformer, {n_layer} layers, {num_heads} heads) [RoPE + RMSNorm + SwiGLU]"
     elif is_v5:
@@ -117,7 +121,7 @@ def interactive_mode(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is
     
     # 加载模型
     checkpoint_path = 'checkpoints/best_model.pt'
-    model, tokenizer = load_model(checkpoint_path, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, is_v5=is_v5, is_v6=is_v6)
+    model, tokenizer = load_model(checkpoint_path, use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, is_v5=is_v5, is_v6=is_v6, is_v7=is_v7)
     
     print("\n💡 使用说明:")
     print("   - 输入提示文本，按回车生成")
@@ -153,10 +157,12 @@ def interactive_mode(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is
         print(f"{'─'*60}")
 
 
-def batch_generate(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False):
+def batch_generate(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v6=False, is_v7=False):
     """批量生成多个样本"""
     if not use_attention:
         version_name = "V1 (Bigram)"
+    elif is_v7:
+        version_name = f"V7 (Better Training, {n_layer} layers, {num_heads} heads) [Warmup + Cosine Decay]"
     elif is_v6:
         version_name = f"V6 (Modern Transformer, {n_layer} layers, {num_heads} heads) [RoPE + RMSNorm + SwiGLU]"
     elif is_v5:
@@ -171,7 +177,7 @@ def batch_generate(use_attention=True, num_heads=1, n_layer=0, is_v5=False, is_v
     print_section(f"🎲 批量生成样本 - {version_name}")
     
     # 加载模型
-    model, tokenizer = load_model(use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, is_v5=is_v5, is_v6=is_v6)
+    model, tokenizer = load_model(use_attention=use_attention, num_heads=num_heads, n_layer=n_layer, is_v5=is_v5, is_v6=is_v6, is_v7=is_v7)
     
     temperatures = [0.5, 0.8, 1.0, 1.2]
     num_samples = 3
@@ -198,6 +204,7 @@ def main():
     n_layer = config.n_layer
     is_v5 = False
     is_v6 = False
+    is_v7 = False
     mode = 'interactive'
     
     for arg in sys.argv[1:]:
@@ -207,45 +214,58 @@ def main():
             n_layer = 0
             is_v5 = False
             is_v6 = False
+            is_v7 = False
         elif arg == 'v2':
             use_attention = True
             num_heads = 1
             n_layer = 0
             is_v5 = False
             is_v6 = False
+            is_v7 = False
         elif arg == 'v3':
             use_attention = True
             num_heads = config.n_head
             n_layer = 0
             is_v5 = False
             is_v6 = False
+            is_v7 = False
         elif arg == 'v4':
             use_attention = True
             num_heads = config.n_head
             n_layer = config.n_layer
             is_v5 = False
             is_v6 = False
+            is_v7 = False
         elif arg == 'v5':
             use_attention = True
             num_heads = config.n_head
             n_layer = config.n_layer
             is_v5 = True
             is_v6 = False
+            is_v7 = False
         elif arg == 'v6':
             use_attention = True
             num_heads = config.n_head
             n_layer = config.n_layer
             is_v5 = False
             is_v6 = True
+            is_v7 = False
+        elif arg == 'v7':
+            use_attention = True
+            num_heads = config.n_head
+            n_layer = config.n_layer
+            is_v5 = False
+            is_v6 = False
+            is_v7 = True
         elif arg == 'batch':
             mode = 'batch'
         elif arg == 'interactive':
             mode = 'interactive'
     
     if mode == 'batch':
-        batch_generate(use_attention, num_heads, n_layer, is_v5, is_v6)
+        batch_generate(use_attention, num_heads, n_layer, is_v5, is_v6, is_v7)
     else:
-        interactive_mode(use_attention, num_heads, n_layer, is_v5, is_v6)
+        interactive_mode(use_attention, num_heads, n_layer, is_v5, is_v6, is_v7)
 
 
 if __name__ == "__main__":
